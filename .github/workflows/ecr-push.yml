@@ -1,0 +1,39 @@
+name: Build and push image to ECR
+
+on:
+  push:
+    branches: [ "master" ] # Adjusted to match your current default branch
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: "eu-north-1"
+      ACCOUNT_ID: "444842679762"
+      REPO_NAME: "ai-designer-repo" # You mentioned you will create this in ECR!
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # This connects to your AWS OIDC IAM Role
+          role-to-assume: arn:aws:iam::${{ env.ACCOUNT_ID }}:role/GithubActionsECRPushRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push container image
+        run: |
+          # Since the frontend and backend run in one container, we just build one image
+          IMAGE="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO_NAME}"
+          echo "Building and pushing image: ${IMAGE}:${GITHUB_SHA}"
+          
+          docker build -f Dockerfile -t "${IMAGE}:${GITHUB_SHA}" .
+          docker push "${IMAGE}:${GITHUB_SHA}"
