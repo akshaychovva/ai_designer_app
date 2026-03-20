@@ -23,7 +23,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           # This connects to your AWS OIDC IAM Role
-          role-to-assume: arn:aws:iam::${{ env.ACCOUNT_ID }}:role/GithubActionsECRPushRole
+          role-to-assume: arn:aws:iam::${{ env.ACCOUNT_ID }}:role/GithubActionsECRPushRoledesignerapp
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
