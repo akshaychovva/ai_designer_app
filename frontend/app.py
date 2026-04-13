@@ -6,7 +6,7 @@ import importlib
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import backend.chat_engine
 importlib.reload(backend.chat_engine)
-from backend.chat_engine import process_architect_chat, process_component_chat, process_builder_chat, process_explain_fields
+from backend.chat_engine import process_architect_chat, process_component_chat, process_builder_chat, process_explain_fields, generate_terraform
 
 st.set_page_config(layout="wide")
 
@@ -20,6 +20,9 @@ def get_sug_items(sug_fields):
 
 if "infra" not in st.session_state:
     st.session_state.infra = {}
+
+if "show_terraform" not in st.session_state:
+    st.session_state.show_terraform = False
 
 if "architect_chat" not in st.session_state:
     st.session_state.architect_chat = []
@@ -53,17 +56,51 @@ with col1:
 
 # ------------- MIDDLE PANEL (GENERIC) -------------
 with col2:
+    # Inject custom CSS for the primary button to make it green
+    st.markdown("""
+        <style>
+        button[kind="primary"]:not([disabled]) {
+            background-color: #28a745 !important;
+            border-color: #28a745 !important;
+            color: white !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
     st.title("⚙️ Interactive Builder")
-    st.subheader("What do you want to build?")
+    st.subheader("What do you want to deploy?")
     
+    st.caption("Please provide at least 5 prompts for clear context.")
+
+    user_msg_count = sum(1 for m in st.session_state.builder_chat if m.get("role") == "user")
+
+    if st.button("Give me the infrastructure design", type="primary", disabled=(user_msg_count < 5)):
+        with st.spinner("Generating infrastructure design..."):
+            st.session_state.builder_chat.append({"role": "user", "content": "yes i want the infrastructure design"})
+            user_msg_count = sum(1 for m in st.session_state.builder_chat if m.get("role") == "user")
+            
+            result = process_builder_chat(st.session_state.builder_chat, infra, user_msg_count)
+            
+            # Merge dynamically returned "add_services" into infra state
+            add_svcs = result.get("add_services", {})
+            if isinstance(add_svcs, dict):
+                for svc_name, svc_list in add_svcs.items():
+                    if svc_name not in infra:
+                        infra[svc_name] = []
+                    if isinstance(svc_list, list):
+                        infra[svc_name].extend(svc_list)
+                
+            st.session_state.builder_chat.append({"role": "assistant", "content": result.get("message", "I have updated the design.")})
+            st.rerun()
+
     if st.session_state.builder_chat:
         last_msg = st.session_state.builder_chat[-1]
-        st.info(f"**AI Builder:** {last_msg}")
+        msg_content = last_msg.get("content") if isinstance(last_msg, dict) else str(last_msg)
+        st.info(f"**AI Builder:** {msg_content}")
         
     builder_input = st.chat_input("E.g., set up Migration Hub, or build an EC2 instance", key="builder_input")
     if builder_input:
         st.session_state.builder_chat.append({"role": "user", "content": builder_input})
-        user_msg_count = sum(1 for m in st.session_state.builder_chat if m["role"] == "user")
+        user_msg_count = sum(1 for m in st.session_state.builder_chat if m.get("role") == "user")
         
         with st.spinner("Analyzing requirements..."):
             result = process_builder_chat(st.session_state.builder_chat, infra, user_msg_count)
@@ -177,22 +214,51 @@ with col2:
 
 # ------------- RIGHT PANEL (GENERIC TREE) -------------
 with col3:
-    st.title("🌳 Infrastructure")
+    if infra:
+        st.markdown("""
+        <style>
+        [data-testid="column"]:nth-of-type(3) [data-testid="stButton"] button {
+            background-color: #ff69b4 !important;
+            border-color: #ff69b4 !important;
+            color: white !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        # Add the pink export button floated to the top right structurally
+        _, _, b_col = st.columns([1, 1, 2])
+        with b_col:
+            btn_label = "🔙 View Diagram" if st.session_state.show_terraform else "🚀 Get Terraform YAML"
+            if st.button(btn_label, key="tf_export_btn"):
+                st.session_state.show_terraform = not st.session_state.show_terraform
+                if st.session_state.show_terraform and "terraform_export_cache" in st.session_state:
+                    del st.session_state["terraform_export_cache"]
+                st.rerun()
+                
+    if st.session_state.show_terraform:
+        st.title("🚀 Terraform Export")
+        with st.spinner("Generating perfect Terraform syntax using AWS Bedrock Nova..."):
+            if "terraform_export_cache" not in st.session_state:
+                tf_code = generate_terraform(st.session_state.infra)
+                st.session_state.terraform_export_cache = tf_code
+            tf_code = st.session_state.terraform_export_cache
+        st.code(tf_code, language="hcl")
+    else:
+        st.title("🌳 Infrastructure")
 
-    if not infra:
-        st.write("*(No components yet)*")
+        if not infra:
+            st.write("*(No components yet)*")
 
-    for svc_name, svc_instances in infra.items():
-        st.markdown(f"**{svc_name}**")
-        for i, inst in enumerate(svc_instances):
-            prefix = "├──" if i < len(svc_instances) - 1 else "└──"
-            
-            # Pick a main identifier (like name, type, id, cidr) to display cleanly
-            ident = inst.get("name", inst.get("type", inst.get("cidr", f"Instance {i+1}")))
-            
-            with st.expander(f"{prefix} {ident}", expanded=False):
-                for k, v in inst.items():
-                    if isinstance(v, list):
-                        st.markdown(f"  - **{k}**: *({len(v)} items)*")
-                    elif not isinstance(v, dict):
-                        st.markdown(f"  - **{k}**: {v}")
+        for svc_name, svc_instances in infra.items():
+            st.markdown(f"**{svc_name}**")
+            for i, inst in enumerate(svc_instances):
+                prefix = "├──" if i < len(svc_instances) - 1 else "└──"
+                
+                # Pick a main identifier (like name, type, id, cidr) to display cleanly
+                ident = inst.get("name", inst.get("type", inst.get("cidr", f"Instance {i+1}")))
+                
+                with st.expander(f"{prefix} {ident}", expanded=False):
+                    for k, v in inst.items():
+                        if isinstance(v, list):
+                            st.markdown(f"  - **{k}**: *({len(v)} items)*")
+                        elif not isinstance(v, dict):
+                            st.markdown(f"  - **{k}**: {v}")

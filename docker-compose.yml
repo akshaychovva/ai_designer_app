@@ -13,4 +13,4 @@ services:
       # Mount your local AWS credentials so the container can authenticate with Amazon Bedrock
       - ~/.aws:/root/.aws:ro
       # Optional: Uncomment below line if you want live hot-reloading while developing without rebuilding the container
-      # - .:/app
+      - .:/app

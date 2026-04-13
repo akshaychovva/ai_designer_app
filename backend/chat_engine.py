@@ -38,7 +38,7 @@ def process_builder_chat(chat_history: list, infra_state: dict, user_msg_count: 
     if user_msg_count < 5:
         phase_instruction = f"PHASE 1 (Question {user_msg_count}/5): You MUST ask exactly ONE intuitive question right now to refine their architecture needs. DO NOT generate any infrastructure yet. Always leave 'add_services' empty."
     elif user_msg_count == 5:
-        phase_instruction = "PHASE 2 (Confirmation): You have asked 5 questions. Now, summarize what you understand briefly and ask: 'Should I go ahead and design this infrastructure for you?'. DO NOT generate any infrastructure yet. Always leave 'add_services' empty."
+        phase_instruction = "PHASE 2 (Confirmation): You have asked 5 questions. Now, summarize what you understand briefly and say: 'If you feel the information provided is enough, please click the \"Give me the infrastructure design\" button to proceed.' DO NOT generate any infrastructure yet. Always leave 'add_services' empty."
     else:
         phase_instruction = "PHASE 3 (Generation): The user has given the go-ahead. Based on the entire chat history, generate the final comprehensive AWS infrastructure design. Populate 'add_services' fully."
 
@@ -60,7 +60,7 @@ You MUST ONLY return a valid JSON object with the following generic structure:
   }}
 }}
 If no new services need to be added right now (which is TRUE for Phase 1 and 2), leave "add_services" strictly empty: {{}}.
-Do NOT include Markdown formatting (like ```json), just raw JSON.'''
+Do NOT include Markdown formatting (like ```json), just raw JSON. ABSOLUTELY NO JSON COMMENTS OR TRAILING COMMAS. Your output must instantly parse with json.loads() without errors.'''
 
     # Format the chat history for context
     history_text = ""
@@ -124,3 +124,22 @@ def process_explain_fields(component: str, fields) -> str:
     system_prompt = f"You are a friendly AWS teacher. The user has been suggested to add the following configuration fields to their {component}: {field_names}. For each field, briefly explain what it is, why it's important, and how it impacts the infrastructure. Keep it beginner-friendly and formatted cleanly."
     prompt = "Please explain these suggested fields."
     return call_bedrock_nova(prompt, system_prompt)
+
+def generate_terraform(infra_state: dict) -> str:
+    """Generates AWS Terraform configuration based on the infrastructure state."""
+    system_prompt = '''You are an expert AWS DevOps Engineer. 
+The user has designed an AWS architecture. Your task is to output ONLY valid HashiCorp Terraform configuration (HCL) that implements this exact architecture.
+Do NOT output any markdown blocks. Do NOT output any explanations. Your output MUST start exactly with 'provider "aws"' or similar.'''
+    
+    prompt = f"Infrastructure State JSON: {json.dumps(infra_state, indent=2)}\n\nPlease convert this to raw Terraform code."
+    response = call_bedrock_nova(prompt, system_prompt).strip()
+    
+    # Strip markdown if any
+    if response.startswith("```hcl") or response.startswith("```terraform"):
+        response = "\n".join(response.split("\n")[1:])
+    if response.startswith("```"):
+        response = "\n".join(response.split("\n")[1:])
+    if response.endswith("```"):
+        response = "\n".join(response.split("\n")[:-1])
+        
+    return response.strip()
